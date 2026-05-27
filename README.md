@@ -82,7 +82,7 @@ Most RAG demos index a single PDF and call it a day. This system implements the 
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/rag-pipeline.git
+git clone https://github.com/ujjwalredd/RAG-Pipeline.git
 cd rag-pipeline
 
 pip install -e ".[dev]"

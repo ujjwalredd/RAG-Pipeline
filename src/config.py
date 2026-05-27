@@ -5,7 +5,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # Ollama
 OLLAMA_BASE_URL = "http://localhost:11434"
 EMBEDDING_MODEL = "nomic-embed-text"
-GENERATION_MODEL = "llama3"
+GENERATION_MODEL = "llama3:8b"
 EMBEDDING_DIMENSION = 768
 
 # ChromaDB

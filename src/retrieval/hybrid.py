@@ -32,7 +32,9 @@ class HybridRetriever:
         use_reranker: bool = True,
     ):
         self.dense = DenseRetriever(vector_store=vector_store, top_k=dense_top_k)
-        self.sparse = SparseRetriever(bm25_index=bm25_index, top_k=sparse_top_k)
+        self.sparse = SparseRetriever(
+            bm25_index=bm25_index, vector_store=vector_store, top_k=sparse_top_k
+        )
         self.reranker = Reranker(top_k=rerank_top_k) if use_reranker else None
         self.fusion_top_k = fusion_top_k
         self.dense_weight = dense_weight

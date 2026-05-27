@@ -22,37 +22,23 @@ Most RAG demos index a single PDF and call it a day. This system implements the 
 
 ## Architecture
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│   Ingestion  │────▶│   Chunking   │────▶│     Indexing     │
-│  md/txt/html │     │  3 strategies│     │ ChromaDB + BM25  │
-│  pdf/parquet │     │  switchable  │     │ dedup (cos>0.95) │
-└──────────────┘     └──────────────┘     └────────┬─────────┘
-                                                   │
-                     ┌─────────────────────────────┘
-                     ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    Hybrid Retrieval                          │
-│  Dense (ChromaDB) ──┐                                        │
-│                     ├── RRF Fusion ──▶ LLM Reranker ──▶ Top 5│
-│  Sparse (BM25) ─────┘   (0.7/0.3)                            │
-└────────────────────────────────┬─────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Generation Pipeline                        │
-│  Grounded LLM ──▶ Citation Verification ──▶ Confidence Score│
-│  (cite [1],[2])    (LLM-as-judge)           (composite 0-1) │
-└─────────────────────────────────────────────────────────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    ▼                         ▼
-             ┌────────────┐          ┌──────────────┐
-             │  FastAPI   │          │  Streamlit   │
-             │  /v1/ask   │          │  Dashboard   │
-             │  /v1/ingest│          │  Compare UI  │
-             └────────────┘          └──────────────┘
-```
+![System Design](assets/system_design.png)
+
+---
+
+## Demo
+
+### Grounded Answer with Verified Citations
+
+When the answer exists in the indexed documents, the system retrieves the correct chunks, generates a grounded answer with inline `[n]` citations, and verifies each citation against its source — achieving 85.5% (hybrid) and 92.4% (dense-only) confidence.
+
+![Successful retrieval with citation verification](assets/demo_citation.png)
+
+### Graceful "I Don't Know" Handling
+
+When the question falls outside the indexed knowledge base, the system doesn't hallucinate. Instead, it explicitly states the information is not available and lists what it did find — letting the user decide where to look next.
+
+![Out-of-scope question handled gracefully](assets/demo_not_found.png)
 
 ---
 

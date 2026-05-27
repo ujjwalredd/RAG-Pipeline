@@ -77,31 +77,20 @@ def ask_question(request: AskRequest):
         else:
             chunks = pipeline.retriever.retrieve_sparse_only(request.question)
 
-        from src.generation.generator import GroundedGenerator
-        generator = GroundedGenerator()
-        answer = generator.generate(request.question, chunks)
+        answer = pipeline.generator.generate(request.question, chunks)
+        citations = pipeline.verifier.verify(answer, chunks)
+        confidence = pipeline.scorer.score(request.question, answer, chunks, citations)
 
-        return AskResponse(
+        from src.generation.pipeline import GenerationResult
+        result = GenerationResult(
             question=request.question,
             answer=answer,
-            is_confident=True,
-            confidence=ConfidenceResponse(
-                retrieval_confidence=0.0,
-                citation_coverage=0.0,
-                answer_completeness=0.0,
-                composite=0.0,
-            ),
-            citations=[],
-            context_chunks=[
-                ChunkResponse(
-                    chunk_id=c.chunk_id,
-                    content=c.content,
-                    score=c.score,
-                    metadata=c.metadata,
-                )
-                for c in chunks
-            ],
+            context_chunks=chunks,
+            citations=citations,
+            confidence=confidence,
+            is_confident=confidence.composite >= pipeline.confidence_threshold,
         )
+        return _format_response(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

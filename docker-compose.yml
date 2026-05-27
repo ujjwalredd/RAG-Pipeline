@@ -1,0 +1,41 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          memory: 4G
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/app/chroma_db
+      - bm25_data:/app
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    command: >
+      sh -c "python scripts/seed.py && uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE=http://api:8000
+    depends_on:
+      - api
+    command: >
+      streamlit run src/dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+
+volumes:
+  ollama_data:
+  chroma_data:
+  bm25_data:

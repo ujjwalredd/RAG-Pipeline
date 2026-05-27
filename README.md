@@ -28,8 +28,8 @@ Most RAG demos index a single PDF and call it a day. This system implements the 
 │  md/txt/html │     │  3 strategies│     │ ChromaDB + BM25  │
 │  pdf/parquet │     │  switchable  │     │ dedup (cos>0.95) │
 └──────────────┘     └──────────────┘     └────────┬─────────┘
-                                                    │
-                     ┌──────────────────────────────┘
+                                                   │
+                     ┌─────────────────────────────┘
                      ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                    Hybrid Retrieval                          │

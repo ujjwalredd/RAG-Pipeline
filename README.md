@@ -4,8 +4,6 @@ A production-grade Retrieval-Augmented Generation system that ingests enterprise
 
 Built on the [EnterpriseRAG-Bench](https://huggingface.co/datasets/onyx-dot-app/EnterpriseRAG-Bench) dataset — 500K+ enterprise documents spanning Confluence, GitHub, Slack, Gmail, Jira, and more — with 500 golden Q&A pairs for rigorous evaluation.
 
----
-
 ## What Makes This Different
 
 Most RAG demos index a single PDF and call it a day. This system implements the production concerns that actually matter:
@@ -18,13 +16,9 @@ Most RAG demos index a single PDF and call it a day. This system implements the 
 - **Near-Duplicate Detection** — Cosine similarity > 0.95 between chunk embeddings flags and skips duplicates, preventing the retriever from wasting context window slots.
 - **59 Automated Tests** — Covering ingestion, chunking, retrieval fusion logic, citation parsing, confidence scoring, API validation, and OpenAPI schema correctness.
 
----
-
 ## Architecture
 
 ![System Design](assets/system_design.png)
-
----
 
 ## Demo
 
@@ -40,7 +34,36 @@ When the question falls outside the indexed knowledge base, the system doesn't h
 
 ![Out-of-scope question handled gracefully](assets/demo_not_found.png)
 
----
+## Performance Tradeoffs
+
+Every RAG system lives on a spectrum between accuracy and speed. This pipeline is designed for correctness first, but every layer can be tuned depending on what matters most for your use case.
+
+### Want Maximum Accuracy? Keep Everything On.
+
+The full pipeline runs hybrid retrieval, reranks with an LLM judge, verifies every citation, and scores confidence before returning an answer. This is the slowest path (~60-80s per query on a MacBook with Ollama), but it catches hallucinations, flags unsupported citations, and knows when to say "I don't know." If you're building something where wrong answers are worse than slow answers — compliance tools, medical documentation, legal research — this is the mode to use.
+
+### Want It Faster? Here's What to Turn Off (and What You Lose).
+
+| Change | Time Saved | What You Give Up |
+|--------|-----------|-----------------|
+| **Disable reranker** (`use_reranker: false`) | ~40-50s | Reranker is the biggest bottleneck — it makes 20 separate LLM calls. Without it, you rely on RRF fusion scores alone. Precision drops on ambiguous queries, but straightforward lookups are barely affected. |
+| **Disable citation verification** | ~10-15s | Citations still appear in the answer, but nobody checks if `[1]` actually supports the claim. Good enough for internal tools where users can click through to source docs. Risky for anything customer-facing. |
+| **Use dense-only retrieval** (`retrieval_mode: "dense"`) | ~2-3s | Skips BM25 and fusion. You lose exact keyword matching — if someone searches for a specific config key like `max_file_size` or an error code, dense search might miss it while BM25 would nail it. |
+| **Reduce fusion candidates** (FUSION_TOP_K: 20 → 10) | ~20s | Fewer chunks go through the reranker. Slightly higher chance of missing a relevant chunk that ranked 11th-20th in fusion. |
+| **Smaller generation model** (switch to Phi-3 or Gemma 2B) | ~50-70% faster generation | Faster but less capable at following citation instructions and producing well-structured answers. Works fine for simple factual lookups, struggles with multi-hop reasoning. |
+
+### Want Both? Here's the Roadmap.
+
+These optimizations would significantly reduce latency without sacrificing accuracy, but they require additional implementation:
+
+- **Parallel reranking** — Score all 20 candidates concurrently instead of sequentially. Same accuracy, ~5x faster reranking. Requires threading since Ollama handles concurrent requests.
+- **Parallel citation verification** — Verify all citations at once instead of one-by-one. Same accuracy, verification drops from ~10s to ~2s.
+- **Batch embeddings** — Ollama's embed API supports batch input. Sending all chunks in one call instead of individually would dramatically speed up ingestion.
+- **Dedicated reranker model** — Replace the LLM-as-judge reranker with a lightweight cross-encoder model (like `bge-reranker-base`). Purpose-built for relevance scoring, runs 10-100x faster than prompting a full LLM.
+- **Query embedding cache** — Cache recent query embeddings so repeated or similar questions skip the embedding step entirely.
+- **Async everything** — Move all Ollama calls to `httpx.AsyncClient` so the FastAPI server isn't blocked waiting on model inference.
+
+The current design intentionally prioritizes correctness and explainability over raw speed. Every slow component exists because it catches a real failure mode — the reranker catches irrelevant chunks that fooled vector search, citation verification catches hallucinated references, and confidence scoring catches answers the model isn't sure about. The right question isn't "how do I make it faster" but "which safety nets can I afford to remove for my use case."
 
 ## Tech Stack
 
@@ -54,8 +77,6 @@ When the question falls outside the indexed knowledge base, the system doesn't h
 | API | FastAPI | Async, auto-generated OpenAPI docs |
 | Dashboard | Streamlit | Rapid prototyping, interactive |
 | Containers | Docker Compose | One-command deployment |
-
----
 
 ## Quick Start
 
@@ -145,8 +166,6 @@ streamlit run src/dashboard/app.py
 
 Open [http://localhost:8501](http://localhost:8501) to interact with the full UI.
 
----
-
 ## Docker Setup (Alternative)
 
 Run everything with one command — Ollama, API, and Dashboard:
@@ -163,8 +182,6 @@ docker-compose up --build
 
 The seed script runs automatically on first start, pulling models and indexing 200 sample documents.
 
----
-
 ## API Reference
 
 ### `POST /v1/ask` — Ask a Question
@@ -179,7 +196,7 @@ The seed script runs automatically on first start, pulling models and indexing 2
 }
 ```
 
-**Response** includes: answer with `[n]` citations, citation verification results (supported/not), confidence scores (retrieval, citation coverage, completeness, composite), and retrieved chunks with metadata.
+The response includes the answer with `[n]` citations, citation verification results showing whether each reference is supported or not, confidence scores broken down by retrieval quality, citation coverage, and completeness, and the full retrieved chunks with their metadata.
 
 ### `POST /v1/ingest` — Index Documents
 
@@ -197,8 +214,6 @@ The seed script runs automatically on first start, pulling models and indexing 2
 
 Returns indexed chunk count and Ollama availability.
 
----
-
 ## Evaluation
 
 ### Run the Full Eval Suite
@@ -207,17 +222,17 @@ Returns indexed chunk count and Ollama availability.
 python3 -m src.evaluation.run_eval
 ```
 
-Evaluates against the golden Q&A dataset and reports:
+This evaluates the pipeline against the golden Q&A dataset and reports five metrics:
 
 | Metric | What It Measures |
 |--------|-----------------|
 | Answer Correctness | LLM-as-judge comparison against gold answer |
 | Faithfulness | Are all claims grounded in retrieved context? |
-| Retrieval Relevance | Precision — % of retrieved chunks from expected docs |
-| Retrieval Recall | % of expected docs found in retrieved chunks |
-| Citation Accuracy | % of `[n]` citations verified as supported |
+| Retrieval Relevance | Precision — what percentage of retrieved chunks come from expected docs |
+| Retrieval Recall | What percentage of expected docs were found in retrieved chunks |
+| Citation Accuracy | What percentage of `[n]` citations are verified as supported |
 
-Results are saved to `eval_results/` as `summary.json` and `results.jsonl`, broken down by question type (basic, semantic, multi-hop, conflicting info, etc.).
+Results are saved to `eval_results/` as `summary.json` and `results.jsonl`, broken down by question type including basic, semantic, multi-hop, conflicting info, and more.
 
 ### Compare Chunking Strategies
 
@@ -230,9 +245,7 @@ comparison = ChunkingComparison(docs, max_eval_cases=50)
 report = comparison.run()
 ```
 
-Produces a side-by-side comparison of fixed-size, recursive, and semantic chunking across all metrics — the data to back up your architecture decisions.
-
----
+This runs the same eval suite across all three chunking strategies and produces a side-by-side comparison showing which strategy wins on which metrics. It gives you concrete numbers to back up architecture decisions in interviews or design reviews.
 
 ## Testing
 
@@ -250,8 +263,6 @@ pytest tests/test_retrieval.py::TestReciprocalRankFusion::test_weight_affects_ra
 ruff check src/ tests/
 ruff format src/ tests/
 ```
-
----
 
 ## Project Structure
 
@@ -302,11 +313,9 @@ scripts/
 └── seed.py             # Auto-setup: pull models + index sample docs
 ```
 
----
-
 ## Configuration
 
-All settings live in `src/config.py`:
+All settings live in `src/config.py`. Here are the ones you're most likely to change:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -320,17 +329,15 @@ All settings live in `src/config.py`:
 | `RERANK_TOP_K` | 5 | Final chunks after reranking |
 | `DEDUP_SIMILARITY_THRESHOLD` | 0.95 | Cosine threshold for deduplication |
 
-To use a different model (e.g., Mistral, Phi-3, Gemma):
+To swap in a different model like Mistral, Phi-3, or Gemma, just pull it and update the config:
 ```bash
 ollama pull mistral
 ```
-Then update `GENERATION_MODEL` in `src/config.py`.
-
----
+Then change `GENERATION_MODEL` in `src/config.py`.
 
 ## Sample Questions to Try
 
-The dataset simulates "Redwood Inference," an AI inference company. Here are questions across difficulty levels:
+The dataset simulates "Redwood Inference," an AI inference company. Here are questions across difficulty levels to test different parts of the pipeline:
 
 **Basic Lookup:**
 > What are the default size limits for file uploads and total request size for the new multipart upload support on the OpenAI-compatible API endpoints?
@@ -344,10 +351,8 @@ The dataset simulates "Redwood Inference," an AI inference company. Here are que
 **Conflicting Information:**
 > On Streamly AI's dedicated pool, what % of interactive burst credits should be reserved for priority=high routes?
 
-**Info Not Found (tests "I don't know"):**
+**Info Not Found (tests the "I don't know" path):**
 > For the admin activity chronicle's daily Merkle-root anchoring, which public blockchain network do we anchor to?
-
----
 
 ## License
 
